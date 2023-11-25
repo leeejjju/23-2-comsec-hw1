@@ -5,13 +5,15 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #define BUF_SIZE 100
 #define NAME_SIZE 20
 #define TEXT 0
 #define FILE_UPLOAD 1
-
+#define BREAK break;
+//#define BREAK ;
 //#define DEBUG
 //#define ALIVE printf("im alive!:%d\n",idx++);
 #define ALIVE idx++;
@@ -20,7 +22,8 @@ void *send_msg(void * arg);
 void *recv_msg(void * arg);
 void error_handling(char * msg);
 void info_callback(const SSL *ssl, int type, int val);
-int recvFile(SSL* ssl, char* filename);
+int getFile(char* filename);
+int sendFile(char* filename);
 
 char name[NAME_SIZE] = "[DEFAULT]";
 char msg[BUF_SIZE];
@@ -148,16 +151,19 @@ void *send_msg(void * arg)   // send thread main
 			int size = sizeof(filename);
 			filename[size-1] = 0;
 			printf("sending file %s...\n", filename);
+			
 			mode = FILE_UPLOAD;
 			//send header: mode filenamesize filename
 			SSL_write(ssl, &mode, sizeof(mode));
-			SSL_write(ssl, &size, sizeof(size));
-			SSL_write(ssl, filename, size);
-			//send contents
-			recvFile(ssl, filename);
+			// SSL_write(ssl, &size, sizeof(size));
+			// SSL_write(ssl, filename, size);
+			// //send contents
+			// sendFile(filename);
+			printf("[system] We do not support file upload system yet, sorry\n");
 
 		}else{
 			sprintf(name_msg,"%s %s", name, msg);
+			
 			mode = TEXT;
 			SSL_write(ssl, &mode, sizeof(mode));
 			SSL_write(ssl, name_msg, strlen(name_msg));
@@ -168,14 +174,9 @@ void *send_msg(void * arg)   // send thread main
 		printf("[send_msg]: im out!\n");
 	#endif
 
-	//printf("[send_msg]: im out!\n");
 	return NULL;
 }
 
-
-int recvFile(SSL* ssl, char* filename){
-
-}
 	
 void *recv_msg(void * arg)   // read thread main
 {
@@ -183,25 +184,34 @@ void *recv_msg(void * arg)   // read thread main
 		printf("[recv_msg]: im in!\n");
 	#endif
 	
-	//SSL *ssl = (SSL*)arg;
 	char name_msg[NAME_SIZE+BUF_SIZE];
-	int str_len;
+	int str_len, mode = TEXT;
 	while (1){
 		#ifdef DEBUG
 			printf("[recv_msg] waiting for msg from server...\n");
 		#endif
-		str_len = SSL_read(ssl, name_msg, NAME_SIZE+BUF_SIZE-1);
-		#ifdef DEBUG
-			printf("[recv_msg] recv %d bytes\n", str_len);
-		#endif
-		if (str_len == -1) 
-			return (void*)-1;
-		else if(str_len == 0){
-			printf("[recv_msg] connection terminated\n");
-			break;
+		str_len = SSL_read(ssl, &mode, sizeof(mode));
+
+		if(mode == TEXT){
+
+			if((str_len = SSL_read(ssl, name_msg, NAME_SIZE+BUF_SIZE-1)) <= 0) break;
+			name_msg[str_len] = 0;
+			fputs(name_msg, stdout);
+	
+			#ifdef DEBUG
+				printf("[recv_msg] recv %d bytes\n", str_len);
+			#endif
+
+		}else if(mode == FILE_UPLOAD){
+			
+			// int filenamesize;
+			// SSL_read(ssl, &filenamesize, sizeof(filenamesize));
+			// SSL_read(ssl, name_msg, filenamesize);
+			// getFile(name_msg);
+			printf("[system] We do not support file upload system yet, sorry\n");
+
 		}
-		name_msg[str_len] = 0;
-		fputs(name_msg, stdout);
+		
 	}
 	#ifdef DEBUG
 		printf("[recv_msg]: im out!\n");
@@ -209,7 +219,75 @@ void *recv_msg(void * arg)   // read thread main
 
 	return NULL;
 }
+
+
+//not work
+int getFile(char* filename){
 	
+	char buf[BUF_SIZE];
+	int readsize = 0, writesize = 0;
+
+	FILE* fp = fopen(filename, "wb");
+	//recv header -> filesize filecontents
+	int filesize;
+	SSL_read(ssl, &filesize, sizeof(int));
+	printf("[getFile] file size: %d\n", filesize);
+	while(filesize > 0){
+		if((readsize = SSL_read(ssl, buf, BUF_SIZE)) <= 0) BREAK
+		buf[readsize-1] = 0;
+		printf("read from file: %d\n", readsize); //xxx
+		printf("%s", buf);
+		if((writesize = fwrite(buf, readsize, 1, fp)) <= 0) BREAK	
+		printf("write to file: %d\n", readsize); //xxx
+		#ifdef DEBUG
+			printf("[getFile] %s", buf);
+		#endif
+		filesize -= readsize;
+	}
+
+	fclose(fp);
+	return 0;
+	
+}
+
+//not work
+int sendFile(char* filename){
+	char buf[BUF_SIZE];
+	int readsize = 0, writesize = 0, i = 0;
+
+	FILE* fp = fopen(filename, "rb");
+	//get fileLen
+	int filenamesize = sizeof(filename);
+	int filesize = 0, mode = FILE_UPLOAD;
+	
+	//TODO get filesize
+	struct stat file_info;
+	if (stat(filename, &file_info) != 0) {
+        perror("Error getting file information");
+        return 1;
+    }
+	filesize = file_info.st_size;
+	SSL_write(ssl, &filesize, sizeof(int));
+
+	printf("[sendFile] file size: %d\n", filesize);
+	//send contents
+	while(!feof(fp)){
+		if((readsize = fread(buf, BUF_SIZE, 1, fp)) <= 0) BREAK
+		buf[readsize-1] = 0;
+		printf("read from file: %d\n", readsize); //xxx
+		printf("[sendFile] %s", buf);
+		if((writesize = SSL_write(ssl, buf, readsize)) <= 0) BREAK
+		printf("write to client: %d\n", readsize); //xxx
+	}
+	#ifdef DEBUG
+		printf("[sendFile] done sending %s\n", filename);
+	#endif
+	
+	fclose(fp);
+	return 0;
+}
+
+
 void error_handling(char *msg)
 {
 	fputs(msg, stderr);

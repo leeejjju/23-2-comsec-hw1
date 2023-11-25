@@ -15,6 +15,8 @@
 #define SERVER_KEY "keys/server.key"
 #define TEXT 0
 #define FILE_UPLOAD 1
+//#define BREAK break;
+#define BREAK ;
 
 //#define DEBUG
 //#define ALIVE printf("im alive!:%d\n",idx++);
@@ -33,6 +35,7 @@ SSL *clnt_ssls[MAX_CLNT];
 pthread_mutex_t mutx;
 SSL_CTX *ctx; 
 int idx = 0;
+char MODE[2][20] = {"TEXT", "FILE_UPLOAD"};
 
 
 int main(int argc, char *argv[]){
@@ -140,27 +143,37 @@ int main(int argc, char *argv[]){
 	return 0;
 }
 
-
-//return 0 on success, return -1 on failure
+//not working
 int getFile(SSL* ssl, char* filename){
-	
+	#ifdef DEBUG
+		printf("[getFile]: im in!\n");
+	#endif
+
 	char buf[BUF_SIZE];
 	int readsize = 0, writesize = 0;
 
 	FILE* fp = fopen(filename, "wb");
 	//recv header -> filesize filecontents
-	int filesize = SSL_read(ssl, buf, sizeof(int));
+	int filesize;
+	SSL_read(ssl, &filesize, sizeof(int));
 
 	while(filesize > 0){
 		
-		if((readsize = SSL_read(ssl, buf, BUF_SIZE)) <= 0) break;
-		buf[readsize] = 0;
-		if((writesize = fwrite(buf, readsize, 1, fp)) <= 0) break;		
+		if((readsize = SSL_read(ssl, buf, BUF_SIZE)) <= 0) BREAK
+		printf("read from client: %d\n", readsize); //xxx
+		buf[readsize-1] = 0;
+		printf("[getFile] %s###", buf);
+		if((writesize = fwrite(buf, readsize, 1, fp)) <= 0) BREAK	
+		printf("write to file: %d\n", readsize); //xxx	
 		#ifdef DEBUG
 			printf("[getFile] %s", buf);
 		#endif
 		filesize -= readsize;
 	}
+	#ifdef DEBUG
+		printf("[getFile]: im out!\n");
+	#endif
+
 
 	//fclose file
 	fclose(fp);
@@ -168,18 +181,24 @@ int getFile(SSL* ssl, char* filename){
 	
 }
 
-//send file on fd to every clients connected
+//not working
 int sendFile(char* filename){
+	#ifdef DEBUG
+		printf("[sendFile]: im in!\n");
+	#endif
+
+
 	char buf[BUF_SIZE];
 	int readsize = 0, writesize = 0, i = 0;
 
 	FILE* fp = fopen(filename, "rb");
 	//get fileLen
 	int filenamesize = sizeof(filename);
-	int filesize = 0; //TODO 
-
+	int filesize = 0, mode = FILE_UPLOAD;
+	
 	//send header -> filenamesize filename filesize
 	for (i = 0; i < clnt_cnt; i++) {
+		SSL_write(clnt_ssls[i], &mode, sizeof(int));
 		SSL_write(clnt_ssls[i], &filenamesize, sizeof(int));
 		SSL_write(clnt_ssls[i], filename, sizeof(filename));
 		SSL_write(clnt_ssls[i], &filesize, sizeof(int));
@@ -189,9 +208,12 @@ int sendFile(char* filename){
 	//send contents
 	for (i = 0; i < clnt_cnt; i++){
 		while(!feof(fp)){
-			if((readsize = fread(buf, BUF_SIZE, 1, fp)) <= 0) break;
-			buf[readsize] = 0;
-			if((writesize = SSL_write(clnt_ssls[i], buf, readsize)) <= 0) break;
+			if((readsize = fread(buf, BUF_SIZE, 1, fp)) <= 0) BREAK
+			buf[readsize-1] = 0;
+			printf("read from file: %d\n", readsize); //xxx
+			printf("[sendFile] %s###", buf);
+			if((writesize = SSL_write(clnt_ssls[i], buf, readsize)) <= 0) BREAK
+			printf("write to client: %d\n", readsize); //xxx
 		}
 		#ifdef DEBUG
 			printf("[sendFile] send %s to one user\n", filename);
@@ -201,7 +223,8 @@ int sendFile(char* filename){
 	#ifdef DEBUG
 		printf("[sendFile] done sending %s\n", filename);
 	#endif
-	
+
+
 
 	fclose(fp);
 	return 0;
@@ -219,21 +242,22 @@ void *handle_clnt(void * arg){
 
 	while(1){
 		if((str_len = SSL_read(ssl, &mode, sizeof(mode))) <= 0) break;
-		printf("[handle_clnt] recved mode: %d\n", mode);
+		printf("[handle_clnt] recved mode: %s\n", MODE[mode]);
 
 		if(mode == TEXT){
 			if((str_len = SSL_read(ssl, msg, sizeof(msg))) <= 0) break;
 			send_msg(ssl, msg, str_len);
 			printf("[handle_clnt] recv message: %s\n", msg);
 		}else if(mode == FILE_UPLOAD){
-			printf("FILEFILEFILEFILEFILEFILE\n");
-			int size;
-			//recv header : filenamesize filename
-			if((str_len = SSL_read(ssl, &size, sizeof(size))) <= 0) break;
-			if((str_len = SSL_read(ssl, msg, size)) <= 0) break;
-			//getFile(ssl, msg);
-			//sendFile(msg);
-			printf("[handle_clnt] filename: %s\n", msg);
+			
+			// int size;
+			// //recv header : filenamesize filename
+			// if((str_len = SSL_read(ssl, &size, sizeof(size))) <= 0) break;
+			// if((str_len = SSL_read(ssl, msg, size)) <= 0) break;
+			// getFile(ssl, msg);
+			// sendFile(msg);
+			// printf("[handle_clnt] filename: %s\n", msg);
+			printf("[system] We do not support file upload system yet, sorry\n");
 		}
 	}
 
@@ -254,55 +278,6 @@ void *handle_clnt(void * arg){
 	return NULL;
 
 }
-
-/*
-void *handle_clnt(void * arg){	
-	#ifdef DEBUG
-		printf("[handle_clnt]: im in!\n");
-	#endif
-
-	//int clnt_sock = *((int*)arg);
-	SSL *ssl = (SSL*)arg;
-	int str_len, i, mode;
-	char msg[BUF_SIZE];
-
-	if(SSL_read(ssl, &mode, sizeof(mode)) <= 0);// break;
-	printf("[handle_clnt] recved mode: %d\n", mode);
-
-	if(mode == TEXT){
-		while((str_len = SSL_read(ssl, msg, sizeof(msg))) > 0){
-			send_msg(ssl, msg, str_len);
-			printf("[handle_clnt] recv message: %s\n", msg);
-		}
-	}else if(mode == FILE_UPLOAD){
-		printf("FILEFILEFILEFILEFILEFILE\n");
-		int size;
-		//recv header : filenamesize filename
-		SSL_read(ssl, &size, sizeof(size));
-		SSL_read(ssl, msg, size);
-		//getFile(ssl, msg);
-		//sendFile(msg);
-		printf("[handle_clnt] filename: %s\n", msg);
-	}
-
-	if (str_len < 0) {
-	    int ssl_err = SSL_get_error(ssl, str_len);
-	    if (ssl_err == SSL_ERROR_ZERO_RETURN) {
-	    } else if (ssl_err == SSL_ERROR_SYSCALL) {
-			perror("[handle_clnt] Error during SSL_read");
-	    } else if (ssl_err == SSL_ERROR_SSL) {
-	        ERR_print_errors_fp(stderr);
-	    }
-	}
-
-	remove_disconnected_client_ssl(ssl);
-	#ifdef DEBUG
-		printf("[handle_clnt]: im out!\n");
-	#endif
-	return NULL;
-
-}
-*/
 
 //send to all
 void send_msg(SSL *ssl, char * msg, int len){
@@ -310,16 +285,18 @@ void send_msg(SSL *ssl, char * msg, int len){
 		printf("[send_msg]: im in!\n");
 	#endif
 
-	int str_len, i;
+	int str_len, i, mode = TEXT;
 	#ifdef DEBUG
 		printf("[send_msg] try to sends message: %s\n", msg);
 	#endif
 	pthread_mutex_lock(&mutx);
-	for (i = 0; i < clnt_cnt; i++)
+	for (i = 0; i < clnt_cnt; i++){
+		str_len = SSL_write(clnt_ssls[i],&mode, sizeof(mode));
 		str_len = SSL_write(clnt_ssls[i], msg, len);
-		#ifdef DEBUG	
-			printf("[send_msg] write %dbyte succesfully\n", str_len);
-		#endif
+	}
+	#ifdef DEBUG	
+		printf("[send_msg] write %dbyte succesfully\n", str_len);
+	#endif
 	if (str_len <= 0) {
 	    int ssl_err = SSL_get_error(clnt_ssls[i], str_len);
 		if (ssl_err == SSL_ERROR_ZERO_RETURN) {
@@ -364,7 +341,6 @@ void remove_disconnected_client_ssl(SSL *clnt_ssl) {
 		printf("[remove_disconnected_client_ssl]: im out!\n");
 	#endif
 }
-
 
 void error_handling(char * msg){
 	fputs(msg, stderr);
